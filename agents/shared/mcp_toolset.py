@@ -90,10 +90,15 @@ def create_customer_data_toolset() -> McpToolset:
     Returns:
         McpToolset: Toolset with customer data tools
     """
-    raise NotImplementedError(
-        "TODO: Return McpToolset with tool_filter selecting customer data tools. "
-        "Use SseConnectionParams(url=MCP_SSE_URL) and a tool_filter list."
+    logger.info("[MCP_TOOLSET] Creating full toolset (no filter)")
+    mcp_toolset = McpToolset(
+        connection_params=SseConnectionParams(
+            url=MCP_SSE_URL
+        ),
+        tool_filter=None  # Include all MCP tools
     )
+    return mcp_toolset
+    
 
 
 # =============================================================================
@@ -133,8 +138,50 @@ def create_support_toolset() -> McpToolset:
     Returns:
         McpToolset: Toolset with support-safe tools only
     """
-    raise NotImplementedError(
-        "TODO: Return McpToolset with tool_filter selecting support-safe tools. "
-        "Exclude admin tools: disable_customer, activate_customer, delete_ticket, "
-        "add_customer, update_customer."
+    #fitered_toolset =  get_allowed_tools()
+
+
+    # 3. Create filtered toolset
+    filtered_toolset = McpToolset(
+        connection_params=SseConnectionParams(
+            url=MCP_SSE_URL
+        ),
+        tool_filter=support_tool_filter,
     )
+
+    return filtered_toolset
+
+def support_tool_filter(tool, context=None):
+    EXCLUDED_TOOLS = {"disable_customer", "activate_customer", "delete_ticket", "add_customer", "update_customer"}
+    return tool.name not in EXCLUDED_TOOLS
+
+def get_allowed_tools():
+    """
+    Discover MCP tools and return names excluding specified tools.
+    """
+    EXCLUDED_TOOLS = {"disable_customer", "activate_customer", "delete_ticket", "add_customer", "update_customer"}
+
+    discovery_toolset = McpToolset(
+        connection_params=SseConnectionParams(
+            url=MCP_SSE_URL
+        ),
+        tool_filter=None  # Include all MCP tools
+    )
+
+    try:
+        all_tools = discovery_toolset.get_tools()
+        all_names = [tool.name for tool in all_tools]
+
+        print("All discovered MCP tools:", all_names)
+
+        allowed_names = [
+            name for name in all_names
+            if name not in EXCLUDED_TOOLS
+        ]
+
+        print("Allowed tools:", allowed_names)
+
+        return allowed_names
+
+    finally:
+        discovery_toolset.close()

@@ -37,6 +37,8 @@ from shared import a2a_compat  # noqa: F401
 from google.adk.agents import Agent, SequentialAgent, ParallelAgent
 from google.adk.agents.remote_a2a_agent import RemoteA2aAgent
 from google.adk.agents.readonly_context import ReadonlyContext
+from google.adk.agents.callback_context import CallbackContext
+from google.genai import types
 from a2a.utils.constants import AGENT_CARD_WELL_KNOWN_PATH
 from shared.agents_config import (
     CUSTOMER_DATA_AGENT_URL,
@@ -46,69 +48,237 @@ from shared.agents_config import (
 
 logger = logging.getLogger(__name__)
 
-
 # =============================================================================
 # TODO BONUS: Summary Instruction Function
 # =============================================================================
 
-def create_summary_instruction(readonly_context: ReadonlyContext) -> str:
+def create_summary_instruction(
+    readonly_context: ReadonlyContext,
+) -> str:
     """
-    Create instruction for summary agent that combines parallel results.
-
-    TODO: Implement this function to:
-      1. Read customer_data_output from readonly_context.state
-      2. Read support_specialist_output from readonly_context.state
-      3. Return an instruction telling the LLM to synthesize both outputs
-
-    Hints:
-      - data_output = readonly_context.state.get("customer_data_output", "")
-      - support_output = readonly_context.state.get("support_specialist_output", "")
-      - Instruction should tell the LLM to combine outputs naturally
+    Read parallel agent outputs from state and create
+    instructions for the summary LLM.
     """
-    raise NotImplementedError("BONUS TODO: Implement create_summary_instruction")
+
+    data_output = readonly_context.state.get(
+        "customer_data_output",
+        "",
+    )
+
+    support_output = readonly_context.state.get(
+        "support_specialist_output",
+        "",
+    )
+
+    logger.info(
+        "Creating summary: customer=%d chars, support=%d chars",
+        len(data_output),
+        len(support_output),
+    )
+
+    return f"""
+    You are the Customer Support Summary Agent.
+
+    Two specialized agents have executed in parallel.
+
+    Your task is to combine their findings into one coherent,
+    accurate, business-friendly response.
+
+    CUSTOMER DATA AGENT RESULT:
+    {data_output or "No customer data was returned."}
+
+    SUPPORT SPECIALIST AGENT RESULT:
+    {support_output or "No support response was returned."}
+
+    INSTRUCTIONS:
+
+    1. Combine relevant information from both agents.
+    2. Present customer details clearly when available.
+    3. Include support recommendations or resolutions.
+    4. Remove duplicated information.
+    5. Do not invent customer records, tickets, or actions.
+    6. If the agents disagree, explain the discrepancy.
+    7. If an agent returned no information, do not assume
+      that its task succeeded.
+    8. Keep the final response concise and actionable.
+
+    Return a single consolidated response.
+    """
 
 
 # =============================================================================
 # TODO BONUS: Create Parallel Agent
 # =============================================================================
 
-def create_agent():
+
+def create_agent() -> SequentialAgent:
     """
-    Create a parallel router agent that executes agents concurrently.
-
-    TODO: Assemble the full orchestrator:
-
-      1. Create remote_customer_data (RemoteA2aAgent):
-         - after_agent_callback that writes this agent's final response text to
-           callback_context.state['customer_data_output']
-
-      2. Create remote_support (RemoteA2aAgent):
-         - after_agent_callback that writes this agent's final response text to
-           callback_context.state['support_specialist_output']
-
-      Hint (after_agent_callback receives a writable CallbackContext):
-          for event in reversed(callback_context.session.events):
-              if (event.author == callback_context.agent_name
-                      and event.content and event.content.parts):
-                  callback_context.state[key] = "".join(
-                      p.text or "" for p in event.content.parts)
-                  break
-          return None
-
-      3. Create parallel_worker_agent (ParallelAgent):
-         - sub_agents=[remote_customer_data, remote_support]
-
-      4. Create summary_agent (Agent):
-         - instruction=create_summary_instruction
-         - include_contents='none'
-
-      5. Create orchestrator (SequentialAgent):
-         - sub_agents=[parallel_worker_agent, summary_agent]
-
-    Returns:
-        Configured SequentialAgent with parallel execution and synthesis
+    Create a parallel A2A orchestrator with summary synthesis.
     """
-    raise NotImplementedError(
-        "BONUS TODO: Create the parallel router agent. "
-        "See the docstring above for the architecture."
+
+    logger.info("Creating Parallel Router Agent")
+
+    # --------------------------------------------------------
+    # Step 1: Customer Data Remote Agent
+    # --------------------------------------------------------
+
+    customer_data_card_url = (
+        f"{CUSTOMER_DATA_AGENT_URL.rstrip('/')}/"
+        f"{AGENT_CARD_WELL_KNOWN_PATH.lstrip('/')}"
     )
+
+    remote_customer_data = RemoteA2aAgent(
+        name="remote_customer_data",
+        description=(
+            "Retrieves customer profiles, account information, "
+            "and customer support tickets."
+        ),
+        agent_card=customer_data_card_url,
+        after_agent_callback=customer_data_after_callback,
+    )
+
+    # --------------------------------------------------------
+    # Step 2: Support Specialist Remote Agent
+    # --------------------------------------------------------
+
+    support_card_url = (
+        f"{SUPPORT_AGENT_URL.rstrip('/')}/"
+        f"{AGENT_CARD_WELL_KNOWN_PATH.lstrip('/')}"
+    )
+
+    remote_support = RemoteA2aAgent(
+        name="remote_support_specialist",
+        description=(
+            "Provides customer support, troubleshooting, "
+            "and issue resolution recommendations."
+        ),
+        agent_card=support_card_url,
+        after_agent_callback=support_after_callback,
+    )
+
+    # --------------------------------------------------------
+    # Step 3: Parallel Execution
+    # --------------------------------------------------------
+
+    parallel_worker_agent = ParallelAgent(
+        name="parallel_support_workers",
+        description=(
+            "Runs Customer Data and Support Specialist "
+            "agents concurrently."
+        ),
+        sub_agents=[
+            remote_customer_data,
+            remote_support,
+        ],
+    )
+
+    # --------------------------------------------------------
+    # Step 4: Summary Agent
+    # --------------------------------------------------------
+
+    summary_agent = Agent(
+        name="parallel_response_summary",
+        model=GEMINI_MODEL,
+        description=(
+            "Synthesizes the outputs of parallel agents "
+            "into a unified response."
+        ),
+        instruction=create_summary_instruction,
+        include_contents="none",
+    )
+
+    # --------------------------------------------------------
+    # Step 5: Sequential Orchestrator
+    # --------------------------------------------------------
+
+    orchestrator = SequentialAgent(
+        name="parallel_host_orchestrator",
+        description=(
+            "Executes remote customer support agents in "
+            "parallel and synthesizes their responses."
+        ),
+        sub_agents=[
+            parallel_worker_agent,
+            summary_agent,
+        ],
+    )
+
+    logger.info(
+        "Parallel Router created successfully"
+    )
+
+    return orchestrator
+
+
+def support_after_callback(
+    callback_context: CallbackContext,
+):
+    """
+    Store Support Specialist output in session state.
+    """
+
+    return save_agent_output(
+        callback_context,
+        "support_specialist_output",
+    )
+
+def customer_data_after_callback(
+    callback_context: CallbackContext,
+):
+    """
+    Store Customer Data Agent output in session state.
+    """
+
+    return save_agent_output(
+        callback_context,
+        "customer_data_output",
+    )
+
+
+def save_agent_output(
+    callback_context: CallbackContext,
+    state_key: str,
+):
+    """
+    Find the latest response produced by the current remote
+    agent and store its text in session state.
+    """
+
+    agent_name = callback_context.agent_name
+
+    logger.info(
+        "Collecting output from agent: %s",
+        agent_name,
+    )
+
+    output = ""
+
+    for event in reversed(callback_context.session.events):
+
+        if (
+            event.author == agent_name
+            and event.content
+            and event.content.parts
+        ):
+            output = "".join(
+                part.text or ""
+                for part in event.content.parts
+            )
+            break
+
+    callback_context.state[state_key] = output
+
+    logger.info(
+        "Stored output for %s: %d characters",
+        state_key,
+        len(output),
+    )
+
+    if not output:
+        logger.warning(
+            "No response text found for agent %s",
+            agent_name,
+        )
+
+    return None
+

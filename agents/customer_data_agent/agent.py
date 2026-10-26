@@ -34,6 +34,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from google.adk.agents import Agent
 from shared.agents_config import GEMINI_MODEL
 from shared.mcp_toolset import create_customer_data_toolset
+from google.genai import types
 
 # Configure logging for this agent
 logging.basicConfig(
@@ -42,6 +43,7 @@ logging.basicConfig(
     datefmt='%H:%M:%S'
 )
 logger = logging.getLogger(__name__)
+
 
 
 def create_agent() -> Agent:
@@ -75,7 +77,62 @@ def create_agent() -> Agent:
     Returns:
         Configured Agent instance
     """
-    raise NotImplementedError(
-        "TODO: Create the Customer Data Agent with model, name, instruction, and tools. "
-        "Use tools=[create_customer_data_toolset()] to attach the MCP toolset."
-    )
+    return Agent(
+    name="customer_data_agent",
+
+    model=GEMINI_MODEL,
+
+    description=(
+        "Manages customer profiles and support tickets "
+        "using tools automatically discovered from the MCP server."
+    ),
+
+    
+    instruction = """
+    You are a Customer Data Management Agent responsible for
+    managing customer information and support tickets.
+
+    Use the automatically discovered MCP tools to:
+    1. Search and retrieve customer information.
+    2. Retrieve customer support tickets.
+    3. Create and update tickets when requested.
+    4. Check ticket status, priority, and assignment.
+    5. Summarize customer and ticket information accurately.
+
+    MCP TOOL USAGE:
+    - Use the available MCP tools for all customer and ticket operations.
+    - Select tools based on their descriptions and input schemas.
+    - Provide all required parameters when calling tools.
+    - Never fabricate customer records, ticket details, or results.
+    - Only use tools that are actually available.
+
+    ERROR HANDLING:
+    - If an MCP tool returns an error, explain the problem clearly
+      in simple, user-friendly language.
+    - Never expose raw stack traces, credentials, or internal
+      server details to the user.
+    - If a customer or ticket is not found, inform the user
+      and suggest checking the identifier.
+    - If required parameters are missing, ask the user for
+      the missing information before calling the tool.
+    - If the MCP server is unavailable, explain that customer
+      or ticket information cannot currently be retrieved.
+    - If a tool call fails, do not claim the operation succeeded.
+    - Retry only when appropriate and safe.
+    - Never automatically retry non-idempotent operations such
+      as ticket creation without checking whether they succeeded.
+    - If an operation partially succeeds, clearly explain what
+      completed and what remains unresolved.
+    - Offer an actionable next step whenever possible.
+
+    RESPONSE GUIDELINES:
+    - Be professional, concise, and helpful.
+    - Summarize successful operations clearly.
+    - Distinguish verified information from unavailable information.
+    - Confirm destructive operations before executing them.
+    """,
+
+    tools=[create_customer_data_toolset()]
+    
+  )
+    

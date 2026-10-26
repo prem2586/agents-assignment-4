@@ -95,8 +95,45 @@ def create_agent() -> SequentialAgent:
     Returns:
         Configured SequentialAgent instance
     """
-    raise NotImplementedError(
-        "TODO: Create the Host Agent with two RemoteA2aAgent sub-agents "
-        "(customer_data and support_specialist) wrapped in a SequentialAgent. "
-        "See the docstring above for the exact structure."
+    # Remote Customer Data Agent
+    customer_data_agent = RemoteA2aAgent(
+        name="customer_data_agent",
+        description=(
+            "Retrieves customer profiles, account information, "
+            "and support ticket details."
+        ),
+        agent_card=(
+            f"{CUSTOMER_DATA_AGENT_URL.rstrip('/')}"
+            f"{AGENT_CARD_WELL_KNOWN_PATH}"
+        ),
     )
+
+    # Remote Support Agent
+    support_agent = RemoteA2aAgent(
+        name="support_agent",
+        description=(
+            "Provides knowledge-base troubleshooting and "
+            "customer support guidance."
+        ),
+        agent_card=(
+            f"{SUPPORT_AGENT_URL.rstrip('/')}"
+            f"{AGENT_CARD_WELL_KNOWN_PATH}"
+        ),
+    )
+
+    # Sequential workflow:
+    # Step 1: Customer Data Lookup
+    # Step 2: Support Guidance
+
+    return SequentialAgent(
+        name="customer_support_host",
+        description=(
+            "Orchestrates customer support by first retrieving "
+            "customer and ticket data, then providing support guidance."
+        ),
+        sub_agents=[
+            customer_data_agent,
+            support_agent,
+        ],
+    )
+    
